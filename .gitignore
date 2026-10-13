@@ -1,0 +1,20 @@
+# Raw and derived data stay local unless explicitly published
+data/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.parquet
+
+# Secrets and local config
+.env
+.env.*
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
