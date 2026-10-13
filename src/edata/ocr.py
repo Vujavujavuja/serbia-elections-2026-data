@@ -10,12 +10,14 @@ data/tessdata. Page text is cached under data/ocr/<sha256>/, so reruns only do n
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import duckdb
+from PIL import Image
 
 from .store import DATA_ROOT
 from .tables import write_table
@@ -43,6 +45,13 @@ def _read_page(pdf: Path, page: int, cache: Path) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", "-f", str(page), "-l", str(page),
                             "-singlefile", str(pdf), f"{tmp}/p"], capture_output=True)
+            tessdata = ["--tessdata-dir", str(DATA_ROOT / "tessdata")]
+            osd = subprocess.run(["tesseract", f"{tmp}/p.png", "-", *tessdata, "--psm", "0"],
+                                 capture_output=True, text=True).stdout
+            rotate = re.search(r"Rotate: (\d+)", osd)
+            if rotate and rotate.group(1) != "0":  # page scanned sideways or upside down
+                with Image.open(f"{tmp}/p.png") as im:
+                    im.rotate(-int(rotate.group(1)), expand=True).save(f"{tmp}/p.png")
             text = subprocess.run(
                 ["tesseract", f"{tmp}/p.png", "-", "--tessdata-dir", str(DATA_ROOT / "tessdata"),
                  "-l", "srp", "--psm", "6"], capture_output=True, text=True).stdout
