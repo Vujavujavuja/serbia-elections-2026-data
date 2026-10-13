@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("source", choices=sorted(sources) + ["all"])
         p.add_argument("options", nargs="*", help="collector options as key=value")
     sub.add_parser("derive", help="rebuild derived tables (links between datasets) from parsed tables")
+    p = sub.add_parser("ocr", help="read the text of downloaded RIK document PDFs (slow)")
+    p.add_argument("--doc-types", default="3")
     sub.add_parser("db", help="rebuild data/elections.duckdb from parsed tables")
     args = parser.parse_args(argv)
 
@@ -43,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
         for name, module in sorted(discover_derived().items()):
             for table, count in module.build().items():
                 print(f"{name}: {table} = {count} rows")
+        build_db()
+        return 0
+    if args.cmd == "ocr":
+        from .ocr import run
+        print(run(args.doc_types))
         build_db()
         return 0
     if args.cmd == "db":
