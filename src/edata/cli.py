@@ -4,6 +4,7 @@ import argparse
 import inspect
 import sys
 
+from .derived import discover as discover_derived
 from .sources import discover
 from .store import RawStore
 from .tables import build_db
@@ -27,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(cmd, help=text)
         p.add_argument("source", choices=sorted(sources) + ["all"])
         p.add_argument("options", nargs="*", help="collector options as key=value")
+    sub.add_parser("derive", help="rebuild derived tables (links between datasets) from parsed tables")
     sub.add_parser("db", help="rebuild data/elections.duckdb from parsed tables")
     args = parser.parse_args(argv)
 
@@ -36,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
             for opt, param in inspect.signature(module.fetch).parameters.items():
                 if opt != "store":
                     print(f"{'':28}   option {opt}={param.default!r}")
+        return 0
+    if args.cmd == "derive":
+        for name, module in sorted(discover_derived().items()):
+            for table, count in module.build().items():
+                print(f"{name}: {table} = {count} rows")
+        build_db()
         return 0
     if args.cmd == "db":
         print(build_db())
