@@ -1,19 +1,25 @@
 """Link polling stations between two elections on the RIK results endpoint.
 
 RIK assigns new station ids for every election, so stations are matched within the same
-municipality by station number and name. The `rule` column says how each pair was made:
+municipality. Stations are ordered by number in each election and the two sequences of
+(normalised) names are aligned, the way a text diff aligns lines. This follows stations
+through insertions and removals that shift every later number, even where several stations
+share one venue name. The `rule` column says how each pair was made:
 
-  number+name      same number, same name after normalising case, quotes and spacing
-  number+similar   same number, names at least 60% similar
-  name_renumbered  different number, identical normalised name that is unique in the
-                   municipality in both elections
-  number_only      same number, names less than 60% similar (may be a different place)
-  unmatched_a/b    present in only one of the two elections
+  number+name       same number and same name
+  renumbered        same name at the aligned position, different number
+  renamed           aligned one-to-one between matched neighbours, names at least 60% similar
+  replaced          aligned one-to-one between matched neighbours, names less than 60% similar
+                    (a new venue for the same slot, or a different station: not decidable from names)
+  unmatched_a/b     present in only one election, or inside a stretch where the number of
+                    stations changed and one-to-one alignment is not possible
+
+Names are compared after normalising case, quotes, punctuation and spacing.
 """
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from difflib import SequenceMatcher
 
 import duckdb
@@ -56,31 +62,22 @@ def build() -> dict[str, int]:
                     "station_id_b": rb[4] if rb else None, "station_no_b": rb[5] if rb else None,
                     "station_name_b": rb[6] if rb else None})
 
-            weak = []
-            for no in sorted(set(a) & set(b)):
-                na, nb = norm(a[no][6]), norm(b[no][6])
-                sim = round(SequenceMatcher(None, na, nb).ratio(), 3)
-                if na == nb:
-                    emit("number+name", a.pop(no), b.pop(no), 1.0)
-                elif sim >= 0.6:
-                    emit("number+similar", a.pop(no), b.pop(no), sim)
+            seq_a = sorted(a.values(), key=lambda r: (int(r[5]) if r[5].isdigit() else 10**9, r[5]))
+            seq_b = sorted(b.values(), key=lambda r: (int(r[5]) if r[5].isdigit() else 10**9, r[5]))
+            names_a, names_b = [norm(r[6]) for r in seq_a], [norm(r[6]) for r in seq_b]
+            matcher = SequenceMatcher(None, names_a, names_b, autojunk=False)
+            for op, a0, a1, b0, b1 in matcher.get_opcodes():
+                if op == "equal":
+                    for ra, rb in zip(seq_a[a0:a1], seq_b[b0:b1]):
+                        emit("number+name" if ra[5] == rb[5] else "renumbered", ra, rb, 1.0)
+                elif op == "replace" and a1 - a0 == b1 - b0:
+                    for ra, rb in zip(seq_a[a0:a1], seq_b[b0:b1]):
+                        sim = round(SequenceMatcher(None, norm(ra[6]), norm(rb[6])).ratio(), 3)
+                        emit("renamed" if sim >= 0.6 else "replaced", ra, rb, sim)
                 else:
-                    weak.append((no, sim))
-            # among what is left (including weak same-number pairs), look for renumbered stations
-            count_a = Counter(norm(r[6]) for r in a_all.get(muni, {}).values())
-            count_b = Counter(norm(r[6]) for r in b_all.get(muni, {}).values())
-            by_name_b = {norm(r[6]): no for no, r in b.items()}
-            for no_a in sorted(a):
-                key = norm(a[no_a][6])
-                no_b = by_name_b.get(key)
-                if no_b is not None and no_b in b and no_b != no_a and count_a[key] == 1 and count_b[key] == 1:
-                    emit("name_renumbered", a.pop(no_a), b.pop(no_b), 1.0)
-            for no, sim in weak:
-                if no in a and no in b:
-                    emit("number_only", a.pop(no), b.pop(no), sim)
-            for no in sorted(a):
-                emit("unmatched_a", a[no], None)
-            for no in sorted(b):
-                emit("unmatched_b", None, b[no])
+                    for ra in seq_a[a0:a1]:
+                        emit("unmatched_a", ra, None)
+                    for rb in seq_b[b0:b1]:
+                        emit("unmatched_b", None, rb)
     write_table("derived", "station_links", rows)
     return {"station_links": len(rows)}
