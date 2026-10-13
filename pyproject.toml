@@ -10,6 +10,7 @@ dependencies = [
     "matplotlib>=3.9",
     "openpyxl>=3.1",
     "pyarrow>=17",
+    "shapely>=2.2.0",
     "xlrd>=2.0",
 ]
 

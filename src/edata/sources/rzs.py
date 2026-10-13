@@ -6,6 +6,9 @@ The catalogue of ids is at https://opendata.stat.gov.rs/odata/ . Add ids to DATA
 """
 from __future__ import annotations
 
+import io
+import zipfile
+
 from ..http import Fetcher
 from ..store import RawStore
 from ..tables import write_table
@@ -35,11 +38,19 @@ def fetch(store: RawStore, only: str = "") -> None:
     fetcher.close()
 
 
+def _csv_bytes(content: bytes) -> bytes:
+    """Large datasets are served as a ZIP holding one CSV, whatever the URL says."""
+    if content[:2] != b"PK":
+        return content
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        return archive.read(archive.namelist()[0])
+
+
 def parse(store: RawStore) -> dict[str, int]:
     out = {}
     latest = store.latest(NAME, key=lambda r: r["tags"].get("dataset"))
     for dataset, r in latest.items():
-        rows = [{**row, "dataset_id": dataset, **provenance(r)} for row in read_delimited(store.read(r))]
+        rows = [{**row, "dataset_id": dataset, **provenance(r)} for row in read_delimited(_csv_bytes(store.read(r)))]
         table = DATASETS.get(dataset, f"dataset_{dataset.lower()}")
         write_table(NAME, table, rows)
         out[table] = len(rows)
