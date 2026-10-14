@@ -27,11 +27,12 @@ PATTERNS = [
     ("replaced_by", N + r"\s*(?:се\s*)?замењуј\w*\s*(?:се\s*)?бројем\s*" + N),
     ("instead_of", r"уместо\s+(?:броја\s*)?[„\"]?" + N + r"[^\d]{0,15}?упис\w*\s*(?:се\s*)?(?:број\s*)?" + N),
     ("changed_to", N + r"\s*(?:се\s*)?мења\s*(?:се\s*)?у\s*(?:број[^\d]{0,60})?" + N),
+    ("blank_filled", r"()празн\w*\s+рубрик\w*\s*(?:се\s*)?упис\w*\s*(?:се\s*)?број\s*" + N),
 ]
 
 
 def _num(s: str) -> int:
-    return int(s.replace(".", ""))
+    return int(s.replace(".", "")) if s else 0  # an empty cell on the record counts as 0
 
 
 def build() -> dict[str, int]:
@@ -56,11 +57,11 @@ def build() -> dict[str, int]:
         found = False
         current_point = None
         # split into segments at each mention of a point ("тачки 11.4") or list number
-        for seg in re.split(r"(?=\bу?\s*тачк\w*\s*\d)|(?=под\s+редним\s+бројем)|(?=редни\s+број)", clause):
-            point = re.search(r"тачк\w*\s*(\d{1,2}(?:\.\d{1,2})?)", seg)
+        for seg in re.split(r"(?=\bу?\s*тачк\w*\s*\d)|(?=\bу?\s*подтачк\w*\s*\d)|(?=под\s+редним\s+бројем)|(?=редни\s+број)", clause):
+            point = re.search(r"(?<!под)тачк\w*\s*(\d{1,2}(?:\.\d{1,2})?)", seg)
             if point:
                 current_point = point.group(1).rstrip(".")
-            lst = re.search(r"редн\w*\s+број\w*\s*(\d{1,2})", seg)
+            lst = re.search(r"(?:редн\w*\s+број\w*|подтачк\w*)\s*(\d{1,2})", seg)
             for pname, pat in PATTERNS:
                 for old, new in re.findall(pat, seg, re.I):
                     if re.search(re.escape(old) + r"\s*\+", seg) or re.search(r"\+\s*" + re.escape(old) + r"\b", seg):
