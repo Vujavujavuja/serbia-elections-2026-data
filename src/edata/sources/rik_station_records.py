@@ -7,6 +7,7 @@ thousands of files, so this one only downloads what `select` asks for:
   select=gap:N        stations where published "voted" exceeds ballots counted by N or more
   select=ids:1,2,3    specific RIK station ids
   select=all          every station of the round
+  doc=TEXT            only documents whose type contains TEXT (e.g. doc=Решење)
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ DESCRIPTION = "Scanned polling-board records (PDF) for selected stations; needs 
 BASE = "https://www.rik.parlament.gov.rs"
 
 
-def fetch(store: RawStore, round: str = "341140", select: str = "gap:10") -> None:
+def fetch(store: RawStore, round: str = "341140", select: str = "gap:10", doc: str = "") -> None:
     con = duckdb.connect()
     parsed = f"{DATA_ROOT}/parsed/rik_results"
     kind, _, arg = select.partition(":")
@@ -38,7 +39,7 @@ def fetch(store: RawStore, round: str = "341140", select: str = "gap:10") -> Non
         where = "TRUE"
     docs = con.execute(f"""SELECT DISTINCT station_id, doc_type, file_name, href, uploaded_at
                            FROM read_parquet('{parsed}/station_documents.parquet')
-                           WHERE round_id = ? AND {where}""", [round]).fetchall()
+                           WHERE round_id = ? AND {where} AND contains(doc_type, ?)""", [round, doc]).fetchall()
     have = {r["tags"].get("href") for r in store.manifest(NAME) if r["status"] == 200}
     fetcher = Fetcher(store, NAME, min_interval=0.5, timeout=300)
     for station_id, doc_type, file_name, href, uploaded_at in docs:
