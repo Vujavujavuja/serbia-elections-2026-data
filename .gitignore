@@ -18,3 +18,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Working log, plots and evidence: local until approved for publication
+findings/
