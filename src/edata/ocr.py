@@ -10,6 +10,7 @@ data/tessdata. Page text is cached under data/ocr/<sha256>/, so reruns only do n
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tempfile
@@ -23,6 +24,8 @@ from .store import DATA_ROOT
 from .tables import write_table
 
 MIN_TEXT_LAYER = 200  # characters on a page before its text layer is trusted
+# Tesseract spreads one page over every core by default; keep it to one so a laptop stays cool
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 
 def _pages(pdf: Path) -> int:
@@ -60,7 +63,7 @@ def _read_page(pdf: Path, page: int, cache: Path) -> None:
     target.write_text(text)
 
 
-def run(doc_types: str = "3", workers: int = 6) -> dict[str, int]:
+def run(doc_types: str = "3", workers: int = 1) -> dict[str, int]:
     con = duckdb.connect()
     docs = con.execute(
         f"""SELECT DISTINCT round_id, doc_type, municipality_display_name, document_name,
