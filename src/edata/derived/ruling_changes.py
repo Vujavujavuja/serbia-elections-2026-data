@@ -63,7 +63,7 @@ def build() -> dict[str, int]:
             lst = re.search(r"редн\w*\s+број\w*\s*(\d{1,2})", seg)
             for pname, pat in PATTERNS:
                 for old, new in re.findall(pat, seg, re.I):
-                    if re.search(re.escape(old) + r"\s*\+", seg):
+                    if re.search(re.escape(old) + r"\s*\+", seg) or re.search(r"\+\s*" + re.escape(old) + r"\b", seg):
                         continue  # "1292+1 замењују бројем 1293": a sum, not an old value
                     found = True
                     rows.append({**base, "point": current_point,
