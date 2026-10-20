@@ -47,7 +47,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{'':28}   option {opt}={param.default!r}")
         return 0
     if args.cmd == "derive":
-        for name, module in sorted(discover_derived().items()):
+        # station_links first: other derived tables use it
+        for name, module in sorted(discover_derived().items(), key=lambda kv: (kv[0] != "station_links", kv[0])):
             for table, count in module.build().items():
                 print(f"{name}: {table} = {count} rows")
         build_db()

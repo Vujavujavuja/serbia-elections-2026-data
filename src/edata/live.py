@@ -39,11 +39,15 @@ def _alerts(round_id: str) -> list[dict]:
             WHERE round_id = ? AND deviance_per_vote >= 0.5 AND deviance_after_undo <= 0.2""", [round_id]).fetchall():
         out.append({"check": "row_shift_candidate", "municipality": mun, "station_no": no,
                     "detail": f"{arr}; deviance {dev} -> {after} after undo"})
-    for mun, no, el, ev, ee, nl, nv in con.execute(f"""
-            SELECT municipality_name, station_no, empty_list, empty_votes, empty_expected, neighbour_list, neighbour_votes
+    for mun, no, el, ev, ee, nl, nv, ps, pm, seen in con.execute(f"""
+            SELECT municipality_name, station_no, empty_list, empty_votes, empty_expected, neighbour_list,
+                   neighbour_votes, previous_share, previous_municipal_share, seen_before
             FROM read_parquet('{p}/row_shift_pairs.parquet') WHERE round_id = ?""", [round_id]).fetchall():
-        out.append({"check": "row_shift_neighbour", "municipality": mun, "station_no": no,
-                    "detail": f"list {el} has {ev} (expected ~{ee}); list {nl} has {nv}"})
+        prev = ("; not comparable with the previous election" if seen is None else
+                f"; same station last time: {ps:.1%} for that party (municipality {pm:.1%})")
+        out.append({"check": "row_shift_neighbour_seen_before" if seen else "row_shift_neighbour",
+                    "municipality": mun, "station_no": no,
+                    "detail": f"list {el} has {ev} (expected ~{ee}); list {nl} has {nv}{prev}"})
     path = Path(f"{p}/result_versions.parquet")
     if path.exists():
         for mun, no, version, seen, votes in con.execute(f"""

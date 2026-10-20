@@ -95,6 +95,7 @@ def build() -> dict[str, int]:
                         "list_order": ",".join(str(c) for c in lists)})
     write_table("derived", NAME, out)
     pairs = _neighbour_pairs(con, p)
+    _compare_with_previous(con, p, pairs)
     write_table("derived", "row_shift_pairs", pairs)
     return {NAME: len(out), "row_shift_pairs": len(pairs)}
 
@@ -129,3 +130,45 @@ def _neighbour_pairs(con, p: str) -> list[dict]:
               AND n.v <= 3 * (a.mshare * a.tot + n.mshare * n.tot)
               AND n.mshare * n.tot < 0.5 * a.mshare * a.tot""", [rnd, rnd]).fetch_arrow_table().to_pylist()
     return rows
+
+
+def _compare_with_previous(con, p: str, pairs: list[dict]) -> None:
+    """Add `previous_*` columns: did the same station (linked through derived/station_links)
+    give the neighbour list's party an unusually high share in the previous election too?
+    If so the pattern is probably how that place votes, not a misplaced row."""
+    from ._list_families import FAMILIES, PREVIOUS
+    links = f"{DATA_ROOT}/parsed/derived/station_links.parquet"
+    for row in pairs:
+        row.update(previous_round=None, previous_station_id=None, previous_share=None,
+                   previous_municipal_share=None, seen_before=None)
+        prev = PREVIOUS.get(row["round_id"])
+        family = FAMILIES.get(row["round_id"], {}).get(row["neighbour_list"])
+        if not prev or not family:
+            continue
+        lists = [k for k, f in FAMILIES[prev].items() if f == family]
+        if not lists:
+            continue
+        link = con.execute(f"""SELECT CASE WHEN round_a = ? THEN station_id_a ELSE station_id_b END
+                               FROM read_parquet('{links}')
+                               WHERE ((round_a = ? AND station_id_b = ?) OR (round_b = ? AND station_id_a = ?))
+                                 AND rule IN ('number+name', 'renumbered', 'renamed')""",
+                           [prev, prev, row["station_id"], prev, row["station_id"]]).fetchone()
+        if not link:
+            continue
+        share = con.execute(f"""
+            WITH r AS (SELECT s.municipality_name m, s.station_id sid, r.count_number l, coalesce(r.votes, 0) v
+                       FROM read_parquet('{p}/stations.parquet') s
+                       JOIN read_parquet('{p}/station_results.parquet') r USING (round_id, station_id)
+                       WHERE s.round_id = ?),
+                 me AS (SELECT m FROM r WHERE sid = ? LIMIT 1)
+            SELECT sum(v) FILTER (WHERE sid = ? AND list_contains(?, l)) / nullif(sum(v) FILTER (WHERE sid = ?), 0),
+                   sum(v) FILTER (WHERE sid <> ? AND list_contains(?, l)) / nullif(sum(v) FILTER (WHERE sid <> ?), 0)
+            FROM r WHERE m = (SELECT m FROM me)""",
+            [prev, link[0], link[0], lists, link[0], link[0], lists, link[0]]).fetchone()
+        if share[0] is None:
+            continue
+        now_share = float(row["neighbour_votes"]) / float(row["station_total"])
+        share = (float(share[0]), float(share[1] or 0))
+        row.update(previous_round=prev, previous_station_id=link[0], previous_share=round(share[0], 4),
+                   previous_municipal_share=round(share[1] or 0, 4),
+                   seen_before=bool(share[0] >= max(2 * (share[1] or 0), 0.5 * now_share)))

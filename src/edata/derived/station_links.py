@@ -29,7 +29,7 @@ from ..tables import write_table
 
 NAME = "station_links"
 DESCRIPTION = "Polling stations matched between Parliamentary 2023 and Parliamentary 2026"
-PAIRS = [("341140", "680072")]
+PAIRS = [("341140", "680072"), ("341143", "341140")]  # (earlier, later)
 COLUMNS = "region_id, municipality_id, municipality_code, municipality_name, station_id, station_no, station_name"
 
 
