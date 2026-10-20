@@ -43,6 +43,21 @@ Everything lands under `data/` (not committed):
 Parsed rows carry `source_url`, `fetched_at` and `raw_sha256`, so any value can be traced
 to the stored response it came from.
 
+## Election night
+
+    caffeinate -dimsu uv run edata live
+
+Every 10 minutes it fetches the national total and each municipality's totals from RIK
+(about 200 requests), re-fetches the stations of municipalities whose numbers changed, and
+every sixth pass re-fetches all stations. After each pass it rebuilds the tables and runs the
+checks: arithmetic rules, row shifts (votes written against the wrong list), and stations whose
+published numbers changed after first publication. Output, local only:
+
+- `findings/live/<round>/status.md` current state, overwritten each pass
+- `findings/live/<round>/alerts.csv` every alert with the time it was first seen
+
+`caffeinate` keeps the Mac awake. Stop with Ctrl+C; every response is already stored.
+
 ## Collectors
 
 | Collector | Publisher | What |

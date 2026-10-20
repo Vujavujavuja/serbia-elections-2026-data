@@ -219,3 +219,68 @@ def parse(store: RawStore) -> dict[str, int]:
     for table, rows in out.items():
         write_table(NAME, table, rows)
     return {table: len(rows) for table, rows in out.items()}
+
+
+def _fingerprint(content: bytes) -> tuple | None:
+    """What counts as a change in an aggregate response: numbers only, not its timestamp."""
+    d = _json(content)
+    if not d:
+        return None
+    s = d.get("stat_sum_numbers") or {}
+    votes = tuple((row.get("count_number"), row.get("won_number")) for row in d.get("table_data") or [])
+    return (s.get("processed_stations"), s.get("total_voters"), s.get("available"), votes)
+
+
+def sweep(store: RawStore, round_id: str, full: bool = False, workers: int = 2) -> dict:
+    """One election-night pass, light on both ends.
+
+    1. Fetch the national total and every municipality's aggregate (about 200 requests).
+    2. Re-fetch the stations of municipalities whose aggregate changed since the last pass,
+       or of every municipality when `full` is set (to catch changes that cancel out).
+    Every response is stored as usual, so each pass adds a timestamped version.
+    """
+    fetcher = Fetcher(store, NAME, min_interval=0.2, headers={
+        "X-Requested-With": "XMLHttpRequest", "Referer": f"{BASE}/542645/rezultati/"})
+    etype = None
+    previous, stations = {}, {}
+    for r in store.manifest(NAME):
+        t = r["tags"]
+        if t.get("round") != round_id or r["status"] != 200:
+            continue
+        etype = t.get("type", etype)
+        if t.get("kind") == "results_municipality":
+            previous[(t["region"], t["municipality"])] = r
+        elif t.get("kind") == "stations":
+            d = _json(store.read(r)) or {}
+            stations[(t["region"], t["municipality"])] = list(d.get("election_stations", {}))
+    if etype is None:
+        raise RuntimeError(f"round {round_id}: run `edata fetch rik_results rounds={round_id} results=no` first")
+
+    def post(data, **tags):
+        return fetcher.fetch(f"{BASE}/get_results/", method="POST", ext=".json",
+                             data={"should_update_pies": 1, "type": etype, "election_round": round_id, **data},
+                             tags={"type": etype, "round": round_id, **tags})[1]
+
+    total = _json(post({"region": 0, "municipality": 0, "election_station": 0}, kind="results_total")) or {}
+    changed = []
+    for (region, muni) in sorted(stations):
+        content = post({"region": region, "municipality": muni, "election_station": 0},
+                       kind="results_municipality", region=region, municipality=muni)
+        before = previous.get((region, muni))
+        if full or before is None or _fingerprint(store.read(before)) != _fingerprint(content):
+            changed.append((region, muni))
+    jobs = [(region, muni, sid) for region, muni in changed
+            if full or (region, muni) in previous for sid in stations[(region, muni)]]
+
+    def one(job):
+        region, muni, sid = job
+        post({"region": region, "municipality": muni, "election_station": sid},
+             kind="results", region=region, municipality=muni, station=sid)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(one, jobs))
+    fetcher.close()
+    s = total.get("stat_sum_numbers") or {}
+    return {"processed_stations": s.get("processed_stations"), "number_of_stations": s.get("number_of_stations"),
+            "results_datetime": s.get("datetime"), "municipalities_changed": len(changed),
+            "stations_fetched": len(jobs)}

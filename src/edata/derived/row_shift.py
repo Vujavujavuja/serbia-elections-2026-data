@@ -22,7 +22,7 @@ from ..tables import write_table
 
 NAME = "row_shift"
 DESCRIPTION = "Stations whose votes look like the municipality's pattern shifted by one list row"
-ROUNDS = ("341140", "341143", "567956")
+ROUNDS = ("341140", "341143", "567956", "680072")
 
 
 def _arrangements(n):
@@ -94,4 +94,38 @@ def build() -> dict[str, int]:
                         "municipal_shares": ",".join(f"{x:.3f}" for x in q),
                         "list_order": ",".join(str(c) for c in lists)})
     write_table("derived", NAME, out)
-    return {NAME: len(out)}
+    pairs = _neighbour_pairs(con, p)
+    write_table("derived", "row_shift_pairs", pairs)
+    return {NAME: len(out), "row_shift_pairs": len(pairs)}
+
+
+def _neighbour_pairs(con, p: str) -> list[dict]:
+    """The simpler rule that found every confirmed 2023 case: list k (almost) empty where the
+    municipality predicts 6+ votes, while the neighbouring row holds about that many extra
+    and is not itself a list expected to be strong there."""
+    rows = []
+    for rnd in ROUNDS:
+        rows += con.execute(f"""
+            WITH v AS (SELECT s.municipality_name m, s.station_id sid, s.station_no sno, r.count_number l,
+                              coalesce(r.votes, 0) v
+                       FROM read_parquet('{p}/stations.parquet') s
+                       JOIN read_parquet('{p}/station_results.parquet') r USING (round_id, station_id)
+                       WHERE s.round_id = ? AND s.region_id IN ('1','2','3','4')
+                       QUALIFY r.raw_sha256 = last_value(r.raw_sha256) OVER (
+                           PARTITION BY r.station_id ORDER BY r.last_fetched_at
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)),
+            t AS (SELECT sid, sum(v) tot FROM v GROUP BY 1),
+            mt AS (SELECT m, l, sum(v) v FROM v GROUP BY 1, 2),
+            ms AS (SELECT m, sum(v) tot FROM v GROUP BY 1),
+            x AS (SELECT v.*, t.tot, (mt.v - v.v) / nullif(ms.tot - t.tot, 0) AS mshare
+                  FROM v JOIN t USING (sid) JOIN mt ON mt.m = v.m AND mt.l = v.l JOIN ms ON ms.m = v.m)
+            SELECT ? AS round_id, a.m AS municipality_name, a.sno AS station_no, a.sid AS station_id,
+                   a.l AS empty_list, a.v AS empty_votes, round(a.mshare * a.tot, 1) AS empty_expected,
+                   n.l AS neighbour_list, n.v AS neighbour_votes, round(n.mshare * n.tot, 1) AS neighbour_expected,
+                   a.tot AS station_total
+            FROM x a JOIN x n ON n.sid = a.sid AND abs(n.l - a.l) = 1
+            WHERE a.mshare * a.tot >= 6 AND a.v <= 0.2 * a.mshare * a.tot
+              AND n.v - n.mshare * n.tot >= 0.6 * a.mshare * a.tot
+              AND n.v <= 3 * (a.mshare * a.tot + n.mshare * n.tot)
+              AND n.mshare * n.tot < 0.5 * a.mshare * a.tot""", [rnd, rnd]).fetch_arrow_table().to_pylist()
+    return rows
